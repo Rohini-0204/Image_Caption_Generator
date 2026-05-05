@@ -3,31 +3,51 @@ import numpy as np
 import pickle
 from PIL import Image
 import google.generativeai as genai
+import tensorflow as tf
+from huggingface_hub import hf_hub_download
 from utils import preprocess_image, predict_caption, idx_to_word 
+
+# ==========================================
+# 0. HUGGING FACE MODEL LOADING (NEW)
+# ==========================================
+@st.cache_resource
+def load_hf_model():
+    try:
+        # Hugging Face theke model weights download kora
+        model_path = hf_hub_download(repo_id="rohini0204/Image_Cap_Genrator", filename="best_model.h5")
+        # Hugging Face theke tokenizer/features pkl download kora
+        tokenizer_path = hf_hub_download(repo_id="rohini0204/Image_Cap_Genrator", filename="features.pkl")
+        
+        # Model loading
+        model = tf.keras.models.load_model(model_path)
+        
+        # Tokenizer loading
+        with open(tokenizer_path, 'rb') as f:
+            tokenizer = pickle.load(f)
+            
+        return model, tokenizer
+    except Exception as e:
+        st.error(f"Error loading model from Hugging Face: {e}")
+        return None, None
+
+# Model initialize kora
+model, tokenizer = load_hf_model()
 
 # ==========================================
 # 1. PAGE SETUP & THEME
 # ==========================================
 st.set_page_config(page_title="Multi-Feature AI Vision", page_icon="📸", layout="wide")
 
-# CUSTOM CSS FOR VISIBILITY AND REMOVING PADDING
 st.markdown("""
     <style>
-    /* Remove default Streamlit header and padding */
     header {visibility: hidden;}
     .main .block-container {padding-top: 2rem;}
-
-    /* Background Gradient */
     .stApp {
         background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
     }
-
-    /* Force all text to be visible */
     .stMarkdown, p, label, .stSelectbox, .stRadio, .stCheckbox {
         color: #ffffff !important;
     }
-
-    /* Glassmorphism Containers */
     div[data-testid="stVerticalBlock"] > div:has(div.stMarkdown) {
         background: rgba(255, 255, 255, 0.07);
         backdrop-filter: blur(15px);
@@ -35,8 +55,6 @@ st.markdown("""
         padding: 20px;
         border: 1px solid rgba(255, 255, 255, 0.1);
     }
-
-    /* Title Styling */
     .hero-title {
         background: -webkit-linear-gradient(#00d2ff, #3a7bd5);
         -webkit-background-clip: text;
@@ -46,8 +64,6 @@ st.markdown("""
         text-align: center;
         margin-top: -50px;
     }
-
-    /* Button Styling */
     .stButton>button {
         width: 100%;
         border-radius: 10px;
@@ -57,40 +73,26 @@ st.markdown("""
         font-weight: bold;
         padding: 10px;
     }
-    
-    /* Fixing the visibility of labels specifically */
     div[data-testid="stWidgetLabel"] p {
         color: #00d2ff !important;
         font-weight: 600 !important;
     }
-            
-    /* FLOATING CHATBOT CSS */
-    .stChatFloating {
-        position: fixed;
-        bottom: 20px;
-        right: 20px;
-        z-index: 1000;
-        width: 350px;
-        background: rgba(255, 255, 255, 0.1);
-        backdrop-filter: blur(10px);
-        border-radius: 15px;
-        border: 1px solid rgba(0, 210, 255, 0.3);
-        padding: 10px;
-    }
     </style>
     """, unsafe_allow_html=True)
 
-# Clean, modern header without the extra boxes
 st.markdown('<h1 class="hero-title">Smart Image Description System</h1>', unsafe_allow_html=True)
 st.markdown('<p style="text-align:center; color:#a1a1a1;">Advanced Multimodal Image Analysis</p>', unsafe_allow_html=True)
 
 # ==========================================
-# 2. API & MODEL SETUP
+# 2. API & MODEL SETUP (GEMINI)
 # ==========================================
-genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-gemini_model = genai.GenerativeModel('models/gemini-2.5-flash-lite')
+# Make sure GEMINI_API_KEY is set in your Streamlit secrets
+if "GEMINI_API_KEY" in st.secrets:
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    gemini_model = genai.GenerativeModel('models/gemini-2.5-flash-lite')
+else:
+    st.error("Gemini API Key missing in Secrets!")
 
-# INITIALIZE CHATBOT STATE
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
@@ -98,7 +100,6 @@ if "chat_history" not in st.session_state:
 # 3. IMAGE UPLOAD, CAMERA & COMPARISON
 # ==========================================
 col_a, col_b = st.columns(2)
-
 image = None 
 
 with col_a:
@@ -113,12 +114,6 @@ with col_a:
         camera_file = st.camera_input("Take a photo")
         if camera_file:
             image = Image.open(camera_file)
-            st.download_button(
-                label="📥 Download Capture",
-                data=camera_file,
-                file_name="camera_capture.png",
-                mime="image/png"
-            )
 
     if image:
         st.image(image, caption="Current Selection", use_container_width=True)
@@ -126,7 +121,6 @@ with col_a:
 with col_b:
     st.subheader("🔄 Comparison Mode")
     enable_comparison = st.checkbox("Enable Image Comparison Mode")
-    uploaded_file_2 = None
     if enable_comparison:
         uploaded_file_2 = st.file_uploader("Upload Second Image", type=['jpg', 'jpeg', 'png'])
         if uploaded_file_2:
@@ -140,16 +134,13 @@ st.divider()
 st.subheader("⚙️ Analysis Parameters")
 
 c1, c2, c3 = st.columns(3)
-
 with c1:
     language = st.selectbox("1. Language", ["English", "Bengali", "Hindi"])
     style = st.selectbox("2. Caption Style", ["Basic", "Professional", "Marketing", "Social media style"])
-
 with c2:
     story_mode = st.selectbox("4. Story Mode", ["Off", "Short Story", "Medium Story", "Long Story"])
     add_hashtags = st.checkbox("5. Hashtag Generator")
     detect_mood = st.checkbox("6. Mood Detection")
-
 with c3:
     detect_quality = st.checkbox("9. Image Quality Detection")
     crop_suggest = st.checkbox("10. Social Media Crop Suggestions")
@@ -166,7 +157,7 @@ if st.button("🚀 Run Full AI Analysis"):
         with st.spinner("Processing..."):
             try:
                 img_input = [image.convert('RGB')]
-                if enable_comparison and uploaded_file_2:
+                if enable_comparison and 'image_2' in locals():
                     img_input.append(image_2.convert('RGB'))
 
                 prompt = f"""
@@ -205,39 +196,30 @@ if st.button("🚀 Run Full AI Analysis"):
                 st.error(f"Analysis Failed: {e}")
 
 # ==========================================
-# 6. DYNAMIC CHATBOT (REMOVING BLANK SPACE)
+# 6. DYNAMIC CHATBOT
 # ==========================================
-
 st.divider()
 st.markdown("### 🤖 AI Chat Assistant")
 
-# Use a standard container without fixed height to remove the empty blank area
 chat_display_area = st.container()
 
 with chat_display_area:
-    # This only renders if there is actual history, preventing a blank gap
-    if "chat_history" in st.session_state and st.session_state.chat_history:
+    if st.session_state.chat_history:
         for message in st.session_state.chat_history:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
 
-# st.chat_input remains pinned to the bottom of your screen
 if chat_user_input := st.chat_input("Ask me anything..."):
-    # Append user message
     st.session_state.chat_history.append({"role": "user", "content": chat_user_input})
     
-    # Refresh display area with new messages
     with chat_display_area:
         with st.chat_message("user"):
             st.markdown(chat_user_input)
 
         with st.chat_message("assistant"):
             try:
-                # Using the existing gemini-2.5-flash-lite model
                 chat_response = gemini_model.generate_content(chat_user_input)
                 st.markdown(chat_response.text)
-                
-                # Save assistant response
                 st.session_state.chat_history.append({"role": "assistant", "content": chat_response.text})
             except Exception as e:
                 st.error(f"Chat Error: {e}")
